@@ -30,9 +30,9 @@ env/
 venv/
 ENV/
 
-# Data and results
-validation_results/
-reports/
+# # Data and results
+# validation_results/
+# reports/
 *.csv
 *.png
 *.json
