@@ -3,15 +3,21 @@ validate_model.py
 
 Пример валидации гибридного предиктора.
 """
-
 import os
+import sys
+
+# Добавляем корневую директорию проекта в путь для импорта
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.insert(0, project_root)
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
 
 from config import get_config
-from models.hybrid_predictor import HybridPredictor
+from predictor_mq.models.hybrid_predictor import HybridPredictor
 
 # Создаем директорию для отчетов, если её нет
 os.makedirs("validation_results", exist_ok=True)

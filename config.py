@@ -7,6 +7,15 @@ config.py
 
 import numpy as np
 
+"""
+
+PredictorConfig(window_size=750, prediction_depth=15, min_confidence=0.6, state_length=4, 
+                significant_change_pct=0.4%, use_weighted_window=False, weight_decay=0.95, 
+                recency_boost=1.5, quantiles=(0.1, 0.5, 0.9), min_samples_for_regression=10, 
+                confidence_threshold=0.5, max_coverage=0.05)
+"""
+
+
 
 class PredictorConfig:
     """
@@ -20,7 +29,7 @@ class PredictorConfig:
         
         # Параметры состояний и порогов
         state_length=4,                # Длина последовательности состояний
-        significant_change_pct=0.01,   # Порог значимого изменения (в долях)
+        significant_change_pct=0.4,   # Порог значимого изменения (в долях)
         default_movement=1,            # Значение движения по умолчанию (1=рост, 2=падение)
         threshold_percentile=75,       # Процентиль для динамического порога
         min_samples_for_threshold=5,   # Минимум образцов для расчета порога
@@ -29,13 +38,13 @@ class PredictorConfig:
         quantiles=(0.1, 0.5, 0.9),      # Квантили для регрессии
         regression_alpha=0.1,           # Параметр регуляризации для регрессии
         regression_solver='highs',      # Решатель для квантильной регрессии
-        min_samples_for_regression=3,   # Минимум образцов для обучения регрессии
+        min_samples_for_regression=10,   # Минимум образцов для обучения регрессии
         
         # Параметры предсказаний
         min_confidence=0.6,             # Минимальная уверенность для предсказания
-        confidence_threshold=0.55,      # Порог уверенности для фильтрации предсказаний
+        confidence_threshold=0.5,      # Порог уверенности для фильтрации предсказаний
         confidence_offset=0.5,          # Смещение для расчета уверенности
-        max_coverage=0.1,               # Максимальное покрытие (доля предсказаний)
+        max_coverage=0.05,               # Максимальное покрытие (доля предсказаний)
         lower_quantile=0.1,             # Нижний квантиль для расчета уверенности
         upper_quantile=0.9,             # Верхний квантиль для расчета уверенности
         mid_lower_quantile=0.25,        # Средний нижний квантиль для отчетов
@@ -165,9 +174,10 @@ def create_high_volatility_config():
         window_size=500,                       # Меньшее окно
         prediction_depth=10,                   # Меньшая глубина предсказания
         state_length=4,
-        significant_change_pct=0.02,           # Больший порог изменения
-        quantiles=(0.1, 0.5, 0.9),
-        confidence_threshold=0.6,
+        significant_change_pct=0.002,           # Больший порог изменения
+        quantiles=(0.05, 0.25, 0.5, 0.75, 0.95),
+        # quantiles=(0.1, 0.5, 0.9),
+        confidence_threshold=0.06,
         max_coverage=0.1
     )
 
@@ -195,6 +205,13 @@ def create_optimized_success_rate_config():
         confidence_threshold=0.58,
         max_coverage=0.1
     )
+"""
+
+PredictorConfig(window_size=750, prediction_depth=15, min_confidence=0.6, state_length=4, 
+                significant_change_pct=0.4%, use_weighted_window=False, weight_decay=0.95, 
+                recency_boost=1.5, quantiles=(0.1, 0.5, 0.9), min_samples_for_regression=10, 
+                confidence_threshold=0.5, max_coverage=0.05)
+"""
 
 def create_quick_test_config():
     """Конфигурация для быстрого тестирования"""
