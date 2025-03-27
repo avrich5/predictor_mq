@@ -12,7 +12,7 @@ import numpy as np
 PredictorConfig(window_size=750, prediction_depth=15, min_confidence=0.6, state_length=4, 
                 significant_change_pct=0.4%, use_weighted_window=False, weight_decay=0.95, 
                 recency_boost=1.5, quantiles=(0.1, 0.5, 0.9), min_samples_for_regression=10, 
-                confidence_threshold=0.5, max_coverage=0.05)
+                confidence_threshold=0.005, max_coverage=0.05)
 """
 
 
@@ -29,7 +29,7 @@ class PredictorConfig:
         
         # Параметры состояний и порогов
         state_length=4,                # Длина последовательности состояний
-        significant_change_pct=0.4,   # Порог значимого изменения (в долях)
+        significant_change_pct=0.004,  # Порог значимого изменения (в долях)
         default_movement=1,            # Значение движения по умолчанию (1=рост, 2=падение)
         threshold_percentile=75,       # Процентиль для динамического порога
         min_samples_for_threshold=5,   # Минимум образцов для расчета порога
@@ -42,7 +42,7 @@ class PredictorConfig:
         
         # Параметры предсказаний
         min_confidence=0.6,             # Минимальная уверенность для предсказания
-        confidence_threshold=0.5,      # Порог уверенности для фильтрации предсказаний
+        confidence_threshold=0.005,      # Порог уверенности для фильтрации предсказаний
         confidence_offset=0.5,          # Смещение для расчета уверенности
         max_coverage=0.05,               # Максимальное покрытие (доля предсказаний)
         lower_quantile=0.1,             # Нижний квантиль для расчета уверенности
@@ -138,10 +138,11 @@ def create_standard_config():
         window_size=750,
         prediction_depth=15,
         state_length=4,
-        significant_change_pct=0.01,
+        significant_change_pct=0.004,
         quantiles=(0.1, 0.5, 0.9),
-        confidence_threshold=0.55,
-        max_coverage=0.1
+        confidence_threshold=0.0055,
+        max_coverage=0.1,
+        plateau_window=500
     )
 
 def create_high_precision_config():
@@ -150,9 +151,9 @@ def create_high_precision_config():
         window_size=750,
         prediction_depth=15,
         state_length=4,
-        significant_change_pct=0.01,
+        significant_change_pct=0.004,
         quantiles=(0.05, 0.25, 0.5, 0.75, 0.95),  # Расширенный набор квантилей
-        confidence_threshold=0.75,               # Высокий порог уверенности
+        confidence_threshold=0.0075,               # Высокий порог уверенности
         max_coverage=0.05                        # Низкое покрытие
     )
 
@@ -164,21 +165,21 @@ def create_high_coverage_config():
         state_length=4,
         significant_change_pct=0.005,           # Меньший порог изменения
         quantiles=(0.1, 0.5, 0.9),
-        confidence_threshold=0.45,              # Низкий порог уверенности
+        confidence_threshold=0.0045,              # Низкий порог уверенности
         max_coverage=0.2                        # Высокое покрытие
     )
 
 def create_high_volatility_config():
     """Конфигурация для рынков с высокой волатильностью"""
     return PredictorConfig(
-        window_size=500,                       # Меньшее окно
-        prediction_depth=10,                   # Меньшая глубина предсказания
-        state_length=4,
-        significant_change_pct=0.002,           # Больший порог изменения
-        quantiles=(0.05, 0.25, 0.5, 0.75, 0.95),
+        window_size=750,                       #  окно
+        prediction_depth=15,                   # глубина предсказания
+        state_length=7,
+        significant_change_pct=0.002,           # порог изменения
+        quantiles=(0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95),
         # quantiles=(0.1, 0.5, 0.9),
-        confidence_threshold=0.06,
-        max_coverage=0.1
+        confidence_threshold=0.0004,
+        max_coverage=0.06
     )
 
 def create_low_volatility_config():
@@ -189,7 +190,7 @@ def create_low_volatility_config():
         state_length=4,
         significant_change_pct=0.005,          # Меньший порог изменения
         quantiles=(0.1, 0.5, 0.9),
-        confidence_threshold=0.5,
+        confidence_threshold=0.005,
         max_coverage=0.1
     )
 
@@ -199,10 +200,10 @@ def create_optimized_success_rate_config():
         window_size=750,
         prediction_depth=15,
         state_length=4,
-        significant_change_pct=0.01,
+        significant_change_pct=0.004,
         quantiles=(0.1, 0.5, 0.9),
         min_samples_for_regression=3,
-        confidence_threshold=0.58,
+        confidence_threshold=0.0058,
         max_coverage=0.1
     )
 """
@@ -210,20 +211,20 @@ def create_optimized_success_rate_config():
 PredictorConfig(window_size=750, prediction_depth=15, min_confidence=0.6, state_length=4, 
                 significant_change_pct=0.4%, use_weighted_window=False, weight_decay=0.95, 
                 recency_boost=1.5, quantiles=(0.1, 0.5, 0.9), min_samples_for_regression=10, 
-                confidence_threshold=0.5, max_coverage=0.05)
+                confidence_threshold=0.005, max_coverage=0.05)
 """
 
 def create_quick_test_config():
     """Конфигурация для быстрого тестирования"""
     return PredictorConfig(
         window_size=500,
-        prediction_depth=10,
-        state_length=3,
-        significant_change_pct=0.01,
-        quantiles=(0.1, 0.5, 0.9),
+        prediction_depth=15,
+        state_length=5,
+        significant_change_pct=0.04, # не влияет 0.004 или 0.04
+        quantiles=(0.05, 0.25, 0.5, 0.75, 0.95),
         min_samples_for_regression=3,
-        confidence_threshold=0.55,
-        max_coverage=0.1,
+        confidence_threshold=0.003,  # не влияет 0.003 или 0.3
+        max_coverage=0.8,
         plateau_window=500
     )
 

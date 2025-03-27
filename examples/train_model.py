@@ -80,7 +80,8 @@ def main():
     prices, volumes = load_data(data_path)
     
     # Создаем предиктор с оптимизированной конфигурацией
-    config = get_config("high_volatility")
+    config = get_config("quick_test")
+    # config = get_config("standard")
     # config = get_config("optimized")
     print("\nИспользуемая конфигурация:")
     print(config)

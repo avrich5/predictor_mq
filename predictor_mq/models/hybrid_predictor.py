@@ -149,7 +149,19 @@ class HybridPredictor:
         print(f"- state_length: {self.config.state_length}")
         print(f"- quantiles: {self.config.quantiles}")
         print(f"- confidence_threshold: {self.config.confidence_threshold}")
-    
+
+    def reset(self):
+        """Сбрасывает состояние предиктора перед новым запуском."""
+        self.current_state = None
+        self.state_history = []
+        self.models = {}  # Сброс моделей для каждого состояния
+        self.point_statistics = {}  # Сброс статистики по точкам
+        self.total_predictions = 0
+        self.correct_predictions = 0
+        self.success_rate = 0.0
+        self.success_rate_history = []  # Сброс истории успешности
+        self.training_samples = {}  # Сброс обучающих образцов
+
     def _precompute_changes(self, prices):
         """Предварительно вычисляет относительные изменения цен с векторизацией"""
         if self.price_changes is None:
@@ -685,15 +697,29 @@ class HybridPredictor:
         elif median < -dynamic_threshold:
             prediction = 2  # падение
         
-        # Рассчитываем уверенность на основе распределения квантилей
-        confidence = 0.0
+        # # Рассчитываем уверенность на основе распределения квантилей
+        # confidence = 0.0
+        # if prediction == 1:  # Рост
+        #     # Уверенность тем выше, чем дальше нижний квантиль от нуля
+        #     confidence = min(1.0, max(0, lower / dynamic_threshold + 0.5))
+        # elif prediction == 2:  # Падение
+        #     # Уверенность тем выше, чем дальше верхний квантиль от нуля (в отрицательную сторону)
+        #     confidence = min(1.0, max(0, -upper / dynamic_threshold + 0.5))
+
+        # Рассчитываем уверенность по-новому
+        """
+        Эта формула основана на абсолютном значении медианы, а не на нижнем или верхнем квантиле, 
+        и дает значение уверенности не меньше 0.5 для любого предсказания, которое преодолевает порог.
+        """
         if prediction == 1:  # Рост
-            # Уверенность тем выше, чем дальше нижний квантиль от нуля
-            confidence = min(1.0, max(0, lower / dynamic_threshold + 0.5))
+            # Используем абсолютное значение и пропорцию от порога
+            confidence = min(1.0, 0.5 + abs(median) / dynamic_threshold * 0.5)
         elif prediction == 2:  # Падение
-            # Уверенность тем выше, чем дальше верхний квантиль от нуля (в отрицательную сторону)
-            confidence = min(1.0, max(0, -upper / dynamic_threshold + 0.5))
-        
+            # Используем абсолютное значение и пропорцию от порога
+            confidence = min(1.0, 0.5 + abs(median) / dynamic_threshold * 0.5)
+        else:
+            confidence = 0.0
+
         # Отладочная информация о решении
         if idx % 1000 == 0:
             print(f"  Decision: prediction={prediction}, confidence={confidence:.4f}, threshold={self.config.confidence_threshold}")
@@ -712,174 +738,16 @@ class HybridPredictor:
         }
         
         return result
-    
+            
     def run_on_data(self, prices, volumes=None, verbose=True, 
                     detect_plateau=True, plateau_window=None, 
                     min_predictions=None, min_success_rate=None):
-            """
-            Запускает модель на всем наборе данных с обнаружением плато
-            
-            Параметры:
-            prices (numpy.array): массив цен
-            volumes (numpy.array, optional): массив объемов торгов
-            verbose (bool): выводить информацию о прогрессе
-            detect_plateau (bool): включить обнаружение плато
-            plateau_window (int): размер окна для обнаружения плато
-            min_predictions (int): минимальное количество предсказаний для оценки плато
-            min_success_rate (float): минимальная успешность для оценки плато
-            
-            Возвращает:
-            list: результаты предсказаний
-            """
-            # Устанавливаем значения по умолчанию из конфигурации, если не указаны
-            if plateau_window is None:
-                plateau_window = self.config.plateau_window
-            if min_predictions is None:
-                min_predictions = self.config.min_predictions_for_plateau
-            if min_success_rate is None:
-                min_success_rate = self.config.min_success_rate_for_plateau
-            
-            # Предварительно вычисляем изменения цен
-            self._precompute_changes(prices)
-            
-            # Инициализируем кэши
-            if not hasattr(self, '_state_cache'):
-                self._state_cache = {}
-            
-            if not hasattr(self, '_threshold_cache'):
-                self._threshold_cache = {}
-            
-            results = []
-                
-            # Начинаем с точки, где у нас достаточно данных для анализа
-            min_idx = max(self.config.window_size, self.config.state_length)
-            
-            # Вычисляем максимальное количество предсказаний
-            max_predictions = int(len(prices) * self.config.max_coverage)
-            current_predictions = 0
-            
-            # Для обнаружения плато
-            success_rate_history = []
-            last_prediction_idx = None
-            plateau_start_idx = None
-            
-            # Проходим по всем точкам
-            with tqdm(total=len(prices) - min_idx - self.config.prediction_depth, 
-                    desc="Processing", disable=not verbose) as pbar:
-                for idx in range(min_idx, len(prices) - self.config.prediction_depth):
-                    # Делаем предсказание
-                    pred_result = self.predict_at_point(prices, idx, max_predictions, current_predictions)
-                    prediction = pred_result['prediction']
-                    
-                    # Получаем состояние для этой точки
-                    dynamic_threshold = self._calculate_dynamic_threshold(prices, idx)
-                    current_state = self._get_state(prices, idx, dynamic_threshold)
-                    
-                    # Если предсказание не "не знаю", проверяем результат
-                    if prediction != 0:
-                        current_predictions += 1
-                        actual_outcome = self._determine_outcome(prices, idx, dynamic_threshold)
-                        
-                        # Пропускаем проверку, если результат незначительное изменение (0)
-                        if actual_outcome is None or actual_outcome == 0:
-                            pbar.update(1)
-                            continue
-                        
-                        is_correct = (prediction == actual_outcome)
-                        
-                        # Обновляем статистику
-                        self.total_predictions += 1
-                        if is_correct:
-                            self.correct_predictions += 1
-                        
-                        # Обновляем успешность
-                        self.success_rate = self.correct_predictions / self.total_predictions if self.total_predictions > 0 else 0
-                        success_rate_history.append(self.success_rate)
-                        
-                        # Запоминаем индекс последнего предсказания
-                        last_prediction_idx = idx
-                        
-                        # Сохраняем статистику для этой точки
-                        self.point_statistics[idx] = {
-                            'correct': self.correct_predictions,
-                            'total': self.total_predictions,
-                            'success_rate': self.success_rate
-                        }
-                        
-                        # Обновляем статистику по этому состоянию
-                        if current_state:  # Проверяем, что состояние определено
-                            self.state_statistics[current_state]['total'] += 1
-                            if is_correct:
-                                self.state_statistics[current_state]['correct'] += 1
-                        
-                        # Сохраняем результат с полной информацией
-                        result = {
-                            'index': idx,
-                            'price': prices[idx],
-                            'prediction': prediction,
-                            'actual': actual_outcome,
-                            'is_correct': is_correct,
-                            'confidence': pred_result['confidence'],
-                            'success_rate': self.success_rate,
-                            'correct_total': f"{self.correct_predictions}-{self.total_predictions}",
-                            'state': current_state,
-                            'quantile_predictions': pred_result.get('quantile_predictions', {})
-                        }
-                        
-                        # Проверка плато в успешности, если активировано
-                        if detect_plateau and self.total_predictions >= min_predictions and self.success_rate >= min_success_rate:
-                            # Если не начали отслеживать плато и обработали достаточно точек без изменения метрики
-                            if plateau_start_idx is None and idx - last_prediction_idx > plateau_window:
-                                plateau_start_idx = idx
-                                if verbose:
-                                    print(f"\nВозможное плато обнаружено на индексе {idx}, успешность: {self.success_rate * 100:.2f}%")
-                            
-                            # Если уже отслеживаем плато и обработали еще достаточно точек
-                            if plateau_start_idx is not None and idx - plateau_start_idx > plateau_window:
-                                if verbose:
-                                    print(f"\nПлато подтверждено. Успешность стабилизировалась на {self.success_rate * 100:.2f}%")
-                                    print(f"Обработано {idx - plateau_start_idx} точек без изменения метрики.")
-                                    print("Останавливаем обработку данных.")
-                                break
-                    else:
-                        # Если предсказание "не знаю"
-                        result = {
-                            'index': idx,
-                            'price': prices[idx],
-                            'prediction': 0,
-                            'confidence': pred_result.get('confidence', 0.0),
-                            'success_rate': self.success_rate if self.total_predictions > 0 else 0,
-                            'state': current_state
-                        }
-                    
-                    results.append(result)
-                    
-                    # Обучаем модель квантильной регрессии на основе этого результата
-                    if idx % self.config.model_update_interval == 0 and idx > min_idx + self.config.prediction_depth:
-                        self._update_quantile_models(prices, results)
-                    
-                    # Обновляем прогресс-бар
-                    pbar.update(1)
-                    if self.total_predictions > 0:
-                        pbar.set_postfix({
-                            'Predictions': self.total_predictions,
-                            'Success Rate': f"{self.success_rate*100:.2f}%"
-                        })
-            
-            # Сохраняем ссылку на массив цен для использования в generate_report
-            self.prices = prices
-            
-            return results
-        
-    def run_on_data_optimized(self, prices, volumes=None, verbose=True, 
-                            detect_plateau=True, plateau_window=None, 
-                            min_predictions=None, min_success_rate=None):
         """
-        Оптимизированная версия метода для запуска модели на всем наборе данных
+        Запускает модель на всем наборе данных с обнаружением плато
         
         Параметры:
         prices (numpy.array): массив цен
-        volumes (numpy.array, optional): массив объемов
+        volumes (numpy.array, optional): массив объемов торгов
         verbose (bool): выводить информацию о прогрессе
         detect_plateau (bool): включить обнаружение плато
         plateau_window (int): размер окна для обнаружения плато
@@ -889,6 +757,9 @@ class HybridPredictor:
         Возвращает:
         list: результаты предсказаний
         """
+        import numpy as np
+        from tqdm import tqdm
+
         # Устанавливаем значения по умолчанию из конфигурации, если не указаны
         if plateau_window is None:
             plateau_window = self.config.plateau_window
@@ -897,29 +768,26 @@ class HybridPredictor:
         if min_success_rate is None:
             min_success_rate = self.config.min_success_rate_for_plateau
         
+        # Сбрасываем состояние предиктора
+        self.reset()
+        
+        # Проверяем, достаточно ли данных
+        if len(prices) < self.config.window_size + 1:
+            print("Недостаточно данных для обработки.")
+            return []
+        
         # Предварительно вычисляем изменения цен
         self._precompute_changes(prices)
         
-        # Инициализируем кэши для хранения промежуточных результатов
+        # Инициализируем кэши
         if not hasattr(self, '_state_cache'):
-            from collections import OrderedDict
-            self._state_cache = OrderedDict()
-            self._state_cache_max_size = 10000
+            self._state_cache = {}
         
         if not hasattr(self, '_threshold_cache'):
             self._threshold_cache = {}
-            self._threshold_cache_max_size = 10000
         
-        if not hasattr(self, '_feature_cache'):
-            self._feature_cache = {}
-            self._feature_cache_max_size = 5000
-        
-        # Предварительно выделяем память для результатов
-        # Оценка: max_coverage * len(prices) с запасом 50%
-        est_results_size = min(int(len(prices) * self.config.max_coverage * 1.5), len(prices))
-        results = [None] * est_results_size
-        actual_results_count = 0
-        
+        results = []
+            
         # Начинаем с точки, где у нас достаточно данных для анализа
         min_idx = max(self.config.window_size, self.config.state_length)
         
@@ -927,157 +795,170 @@ class HybridPredictor:
         max_predictions = int(len(prices) * self.config.max_coverage)
         current_predictions = 0
         
-        # Для обнаружения плато
+        # Для обнаружения сходимости
         success_rate_history = []
         last_prediction_idx = None
         plateau_start_idx = None
         
-        # Оптимизируем интервал обновления моделей на основе размера данных
-        model_update_interval = self.config.model_update_interval
-        if len(prices) > 100000:
-            model_update_interval *= 2  # Реже обновляем для больших наборов данных
+        # Создаем диапазон индексов для итерации
+        indices = range(min_idx, len(prices) - self.config.prediction_depth)
         
-        # Проходим по всем точкам с оптимизированным кэшированием
-        with tqdm(total=len(prices) - min_idx - self.config.prediction_depth, 
-                desc="Processing", disable=not verbose) as pbar:
-            for idx in range(min_idx, len(prices) - self.config.prediction_depth):
-                # Делаем предсказание
-                # Используем оптимизированную версию extract_features
-                if hasattr(self, '_extract_features_optimized'):
-                    # Временно сохраняем оригинальный метод
-                    original_extract = self._extract_features
-                    # Подменяем на оптимизированный
-                    self._extract_features = self._extract_features_optimized
-                    
-                    pred_result = self.predict_at_point(prices, idx, max_predictions, current_predictions)
-                    
-                    # Возвращаем оригинальный метод
-                    self._extract_features = original_extract
-                else:
-                    # Если оптимизированный метод не доступен, используем обычный
-                    pred_result = self.predict_at_point(prices, idx, max_predictions, current_predictions)
-                    
-                prediction = pred_result['prediction']
-                
-                # Получаем состояние для этой точки (используем кэширование)
-                dynamic_threshold = self._calculate_dynamic_threshold(prices, idx)
-                current_state = self._get_state(prices, idx, dynamic_threshold)
-                
-                # Если предсказание не "не знаю", проверяем результат
-                if prediction != 0:
-                    current_predictions += 1
-                    actual_outcome = self._determine_outcome(prices, idx, dynamic_threshold)
-                    
-                    # Пропускаем проверку, если результат незначительное изменение (0)
-                    if actual_outcome is None or actual_outcome == 0:
-                        pbar.update(1)
-                        continue
-                    
-                    is_correct = (prediction == actual_outcome)
-                    
-                    # Обновляем статистику
-                    self.total_predictions += 1
-                    if is_correct:
-                        self.correct_predictions += 1
-                    
-                    # Обновляем успешность
-                    self.success_rate = self.correct_predictions / self.total_predictions if self.total_predictions > 0 else 0
-                    success_rate_history.append(self.success_rate)
-                    
-                    # Запоминаем индекс последнего предсказания
-                    last_prediction_idx = idx
-                    
-                    # Сохраняем статистику для этой точки
-                    self.point_statistics[idx] = {
-                        'correct': self.correct_predictions,
-                        'total': self.total_predictions,
-                        'success_rate': self.success_rate
-                    }
-                    
-                    # Обновляем статистику по этому состоянию
-                    if current_state:  # Проверяем, что состояние определено
-                        self.state_statistics[current_state]['total'] += 1
-                        if is_correct:
-                            self.state_statistics[current_state]['correct'] += 1
-                    
-                    # Сохраняем результат с полной информацией
-                    result = {
-                        'index': idx,
-                        'price': prices[idx],
-                        'prediction': prediction,
-                        'actual': actual_outcome,
-                        'is_correct': is_correct,
-                        'confidence': pred_result['confidence'],
-                        'success_rate': self.success_rate,
-                        'correct_total': f"{self.correct_predictions}-{self.total_predictions}",
-                        'state': current_state,
-                        'quantile_predictions': pred_result.get('quantile_predictions', {})
-                    }
-                    
-                    # Проверка плато в успешности, если активировано
-                    if detect_plateau and self.total_predictions >= min_predictions and self.success_rate >= min_success_rate:
-                        # Если не начали отслеживать плато и обработали достаточно точек без изменения метрики
-                        if plateau_start_idx is None and idx - last_prediction_idx > plateau_window:
-                            plateau_start_idx = idx
-                            if verbose:
-                                print(f"\nВозможное плато обнаружено на индексе {idx}, успешность: {self.success_rate * 100:.2f}%")
-                        
-                        # Если уже отслеживаем плато и обработали еще достаточно точек
-                        if plateau_start_idx is not None and idx - plateau_start_idx > plateau_window:
-                            if verbose:
-                                print(f"\nПлато подтверждено. Успешность стабилизировалась на {self.success_rate * 100:.2f}%")
-                                print(f"Обработано {idx - plateau_start_idx} точек без изменения метрики.")
-                                print("Останавливаем обработку данных.")
-                            break
-                else:
-                    # Если предсказание "не знаю"
-                    result = {
-                        'index': idx,
-                        'price': prices[idx],
-                        'prediction': 0,
-                        'confidence': pred_result.get('confidence', 0.0),
-                        'success_rate': self.success_rate if self.total_predictions > 0 else 0,
-                        'state': current_state
-                    }
-                
-                # Добавление результата с оптимизированным использованием памяти
-                if actual_results_count < est_results_size:
-                    results[actual_results_count] = result
-                    actual_results_count += 1
-                else:
-                    # Если предварительно выделенной памяти не хватило, добавляем в конец
-                    results.append(result)
-                
-                # Обучаем модель квантильной регрессии периодически
-                if idx % model_update_interval == 0 and idx > min_idx + self.config.prediction_depth:
-                    # Используем только фактически заполненную часть массива
-                    actual_results = results[:actual_results_count] if actual_results_count < len(results) else results
-                    self._update_quantile_models(prices, actual_results)
-                
-                # Обновляем прогресс-бар
-                pbar.update(1)
-                if self.total_predictions > 0:
-                    pbar.set_postfix({
-                        'Predictions': self.total_predictions,
-                        'Success Rate': f"{self.success_rate*100:.2f}%"
-                    })
+        # Инициализация прогресс-бара
+        pbar = tqdm(total=len(indices), 
+                    desc="Processing", 
+                    mininterval=1.0,  # Обновляем прогресс-бар раз в секунду
+                    disable=not verbose)
+        
+        # Проходим по всем точкам
+        for idx in indices:
+            # Делаем предсказание
+            pred_result = self.predict_at_point(prices, idx, max_predictions, current_predictions)
+            prediction = pred_result['prediction']
             
-            # Очищаем кэши после завершения для освобождения памяти
-            if hasattr(self, '_state_cache'):
-                self._state_cache.clear()
-            if hasattr(self, '_threshold_cache'):
-                self._threshold_cache.clear()
-            if hasattr(self, '_feature_cache'):
-                self._feature_cache.clear()
-            if hasattr(self, '_ma_cache'):
-                self._ma_cache.clear()
+            # Получаем состояние для этой точки
+            dynamic_threshold = self._calculate_dynamic_threshold(prices, idx)
+            current_state = self._get_state(prices, idx, dynamic_threshold)
+            
+            # Если предсказание не "не знаю", проверяем результат
+            if prediction != 0:
+                current_predictions += 1
+                actual_outcome = self._determine_outcome(prices, idx, dynamic_threshold)
+                
+                # Пропускаем проверку, если результат незначительное изменение (0)
+                if actual_outcome is None or actual_outcome == 0:
+                    pbar.update(1)
+                    continue
+                
+                is_correct = (prediction == actual_outcome)
+                
+                # Обновляем статистику
+                self.total_predictions += 1
+                if is_correct:
+                    self.correct_predictions += 1
+                
+                # Обновляем успешность
+                self.success_rate = self.correct_predictions / self.total_predictions if self.total_predictions > 0 else 0
+                success_rate_history.append(self.success_rate)
+                
+                # Запоминаем индекс последнего предсказания
+                last_prediction_idx = idx
+                
+                # Сохраняем статистику для этой точки
+                self.point_statistics[idx] = {
+                    'correct': self.correct_predictions,
+                    'total': self.total_predictions,
+                    'success_rate': self.success_rate
+                }
+                
+                # Обновляем статистику по этому состоянию
+                if current_state:  # Проверяем, что состояние определено
+                    self.state_statistics[current_state]['total'] += 1
+                    if is_correct:
+                        self.state_statistics[current_state]['correct'] += 1
+                
+                # Сохраняем результат с полной информацией
+                result = {
+                    'index': idx,
+                    'price': prices[idx],
+                    'prediction': prediction,
+                    'actual': actual_outcome,
+                    'is_correct': is_correct,
+                    'confidence': pred_result['confidence'],
+                    'success_rate': self.success_rate,
+                    'correct_total': f"{self.correct_predictions}-{self.total_predictions}",
+                    'state': current_state,
+                    'quantile_predictions': pred_result.get('quantile_predictions', {})
+                }
+                
+            #     # Проверка сходимости (заменяем старую логику плато)
+            #     if detect_plateau and self.total_predictions >= min_predictions and self.success_rate >= min_success_rate:
+            #         window = plateau_window
+            #         threshold = 0.001  # Порог изменения успешности (0.1%)
+                    
+            #         if len(success_rate_history) >= window:
+            #             recent_rates = success_rate_history[-window:]
+            #             rate_changes = np.abs(np.diff(recent_rates))
+            #             avg_change = np.mean(rate_changes)
+                        
+            #             if hasattr(self.config, 'debug_interval') and self.config.debug_interval > 0 and idx % self.config.debug_interval == 0:
+            #                 print(f"Convergence check at index {idx}: avg_change={avg_change:.6f}, threshold={threshold}")
+                        
+            #             if avg_change < threshold:
+            #                 if verbose:
+            #                     print(f"\nСходимость достигнута на индексе {idx}, успешность: {self.success_rate * 100:.2f}%")
+            #                     print(f"Среднее изменение успешности за последние {window} точек: {avg_change:.6f}")
+            #                     print("Останавливаем обработку данных.")
+            #                 break
+            # else:
+            #     # Если предсказание "не знаю"
+            #     result = {
+            #         'index': idx,
+            #         'price': prices[idx],
+            #         'prediction': 0,
+            #         'confidence': pred_result.get('confidence', 0.0),
+            #         'success_rate': self.success_rate if self.total_predictions > 0 else 0,
+            #         'state': current_state
+            #     }
+            
+            # results.append(result)
+
+            # Проверка сходимости (супер новая логика плато)
+            if detect_plateau and self.total_predictions >= min_predictions and self.success_rate >= min_success_rate:
+                window = plateau_window
+                # threshold = 0.001  # Убираем порог, так как проверяем точное равенство 0
+                
+                if len(success_rate_history) >= window:
+                    recent_rates = success_rate_history[-window:]  # Берем последние plateau_window значений
+                    rate_changes = np.abs(np.diff(recent_rates))  # Вычисляем абсолютные изменения
+                    
+                    # if hasattr(self.config, 'debug_interval') and self.config.debug_interval > 0 and idx % self.config.debug_interval == 0:
+                    #     print(f"Convergence check at index {idx}: rate_changes={rate_changes}")
+                    
+                    # Проверяем, что все изменения равны 0
+                    if np.all(rate_changes == 0):
+                        if verbose:
+                            print(f"\nСходимость достигнута на индексе {idx}, успешность: {self.success_rate * 100:.2f}%")
+                            print(f"Все изменения успешности за последние {window} точек равны 0")
+                            print("Останавливаем обработку данных.")
+                        break
+            else:
+                # Если предсказание "не знаю"
+                result = {
+                    'index': idx,
+                    'price': prices[idx],
+                    'prediction': 0,
+                    'confidence': pred_result.get('confidence', 0.0),
+                    'success_rate': self.success_rate if self.total_predictions > 0 else 0,
+                    'state': current_state
+                }
+                
+            results.append(result)
+
+            # Обучаем модель квантильной регрессии на основе этого результата
+            if idx % self.config.model_update_interval == 0 and idx > min_idx + self.config.prediction_depth:
+                self._update_quantile_models(prices, results)
+            
+            # Обновляем прогресс-бар
+            pbar.update(1)
+            if self.total_predictions > 0:
+                pbar.set_postfix({
+                    'Predictions': self.total_predictions,
+                    'Success Rate': f"{self.success_rate*100:.2f}%"
+                })
+        
+        # Финализация
+        pbar.close()
+        if verbose:
+            print("\nВалидация завершена:")
+            print(f"- Всего предсказаний: {self.total_predictions}")
+            print(f"- Правильных предсказаний: {self.correct_predictions}")
+            print(f"- Успешность: {self.success_rate * 100:.2f}%")
         
         # Сохраняем ссылку на массив цен для использования в generate_report
         self.prices = prices
         
-        # Возвращаем только фактически заполненную часть результатов
-        return results[:actual_results_count] if actual_results_count < len(results) else results
-        
+        return results
+
     def get_state_statistics(self):
         """
         Возвращает статистику по состояниям

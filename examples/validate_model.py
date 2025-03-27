@@ -129,7 +129,7 @@ def run_validation_on_dataset(data_file, config):
     return validation_result
 
 
-def run_validation_pipeline(data_dir, preset_name="optimized"):
+def run_validation_pipeline(data_dir, preset_name="high_volatility"):
     """
     Запускает валидацию на всех наборах данных в директории
     
