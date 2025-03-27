@@ -1,21 +1,16 @@
 """
 config.py
-
 Конфигурационный файл для настройки гибридного предиктора.
 Содержит параметры по умолчанию и предустановленные конфигурации.
-"""
 
-import numpy as np
-
-"""
-
+This config had success_rate = 57.81% 
 PredictorConfig(window_size=750, prediction_depth=15, min_confidence=0.6, state_length=4, 
                 significant_change_pct=0.4%, use_weighted_window=False, weight_decay=0.95, 
                 recency_boost=1.5, quantiles=(0.1, 0.5, 0.9), min_samples_for_regression=10, 
                 confidence_threshold=0.005, max_coverage=0.05)
 """
 
-
+import numpy as np
 
 class PredictorConfig:
     """
@@ -199,20 +194,14 @@ def create_optimized_success_rate_config():
     return PredictorConfig(
         window_size=750,
         prediction_depth=15,
+        min_confidence=0.6,
         state_length=4,
         significant_change_pct=0.004,
         quantiles=(0.1, 0.5, 0.9),
-        min_samples_for_regression=3,
-        confidence_threshold=0.0058,
-        max_coverage=0.1
+        min_samples_for_regression=10,
+        confidence_threshold=0.005,
+        max_coverage=0.05
     )
-"""
-
-PredictorConfig(window_size=750, prediction_depth=15, min_confidence=0.6, state_length=4, 
-                significant_change_pct=0.4%, use_weighted_window=False, weight_decay=0.95, 
-                recency_boost=1.5, quantiles=(0.1, 0.5, 0.9), min_samples_for_regression=10, 
-                confidence_threshold=0.005, max_coverage=0.05)
-"""
 
 def create_quick_test_config():
     """Конфигурация для быстрого тестирования"""
@@ -223,7 +212,7 @@ def create_quick_test_config():
         significant_change_pct=0.04, # не влияет 0.004 или 0.04
         quantiles=(0.05, 0.25, 0.5, 0.75, 0.95),
         min_samples_for_regression=3,
-        confidence_threshold=0.003,  # не влияет 0.003 или 0.3
+        confidence_threshold=0.003,  # не влияет 0.003  или 0.3
         max_coverage=0.8,
         plateau_window=500
     )
