@@ -209,10 +209,14 @@ def create_quick_test_config():
         window_size=500,
         prediction_depth=15,
         state_length=5,
-        significant_change_pct=0.04, # не влияет 0.004 или 0.04
+        significant_change_pct=0.002,  # 0.2% - теперь действительно влияет! 
+                                       # Увеличение значения -> меньше состояний и предсказаний
+                                       # Уменьшение значения -> больше состояний и предсказаний
         quantiles=(0.05, 0.25, 0.5, 0.75, 0.95),
         min_samples_for_regression=3,
-        confidence_threshold=0.003,  # не влияет 0.003  или 0.3
+        confidence_threshold=0.003,    # Теперь также влияет!
+                                       # Увеличение значения -> меньше предсказаний, но выше точность
+                                       # Уменьшение значения -> больше предсказаний, но ниже точность
         max_coverage=0.8,
         plateau_window=500
     )

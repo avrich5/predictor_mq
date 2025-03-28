@@ -174,7 +174,7 @@ class HybridPredictor:
             self.price_changes[mask] = price_diffs[mask] / prices[:-1][mask]
 
     def _calculate_dynamic_threshold(self, prices, idx):
-        """Вычисляет динамический порог для определения значимого изменения с кэшированием"""
+        """Вычисляет динамический порог для определения значимого изменения с учетом significant_change_pct"""
         # Инициализируем кэш, если его нет
         if not hasattr(self, '_threshold_cache'):
             self._threshold_cache = {}
@@ -187,17 +187,27 @@ class HybridPredictor:
         if idx in self._threshold_cache:
             return self._threshold_cache[idx]
         
+        # Базовое значение порога из конфигурации
+        base_threshold = self.config.significant_change_pct
+        
         # Оригинальная логика вычисления порога
         start_idx = max(0, idx - self.config.window_size)
         if start_idx >= len(self.price_changes):
-            return self.config.significant_change_pct
+            return base_threshold
         
         changes = self.price_changes[start_idx:idx-1]
         if len(changes) < self.config.min_samples_for_threshold:
-            return self.config.significant_change_pct
+            return base_threshold
         
         # Используем указанный в конфигурации процентиль
-        threshold = np.percentile(np.abs(changes), self.config.threshold_percentile)
+        dynamic_threshold = np.percentile(np.abs(changes), self.config.threshold_percentile)
+        
+        # Определяем коэффициент на основе significant_change_pct 
+        # При значении 0.004 (0.4%) коэффициент близок к 1
+        scaling_factor = base_threshold / 0.004
+        
+        # Применяем коэффициент к динамическому порогу
+        threshold = dynamic_threshold * scaling_factor
         
         # Контроль размера кэша
         if len(self._threshold_cache) >= self._threshold_cache_max_size:
@@ -207,7 +217,7 @@ class HybridPredictor:
         # Сохраняем в кэш
         self._threshold_cache[idx] = threshold
         return threshold
-    
+
     def _determine_movement(self, current_price, next_price, threshold):
         """Определяет направление движения с учетом порога значимого изменения"""
         if current_price == 0:
@@ -706,37 +716,90 @@ class HybridPredictor:
         #     # Уверенность тем выше, чем дальше верхний квантиль от нуля (в отрицательную сторону)
         #     confidence = min(1.0, max(0, -upper / dynamic_threshold + 0.5))
 
-        # Рассчитываем уверенность по-новому
-        """
-        Эта формула основана на абсолютном значении медианы, а не на нижнем или верхнем квантиле, 
-        и дает значение уверенности не меньше 0.5 для любого предсказания, которое преодолевает порог.
-        """
+        # # Рассчитываем уверенность по-новому
+        # """
+        # Эта формула основана на абсолютном значении медианы, а не на нижнем или верхнем квантиле, 
+        # и дает значение уверенности не меньше 0.5 для любого предсказания, которое преодолевает порог.
+        # """
+        # if prediction == 1:  # Рост
+        #     # Используем абсолютное значение и пропорцию от порога
+        #     confidence = min(1.0, 0.5 + abs(median) / dynamic_threshold * 0.5)
+        # elif prediction == 2:  # Падение
+        #     # Используем абсолютное значение и пропорцию от порога
+        #     confidence = min(1.0, 0.5 + abs(median) / dynamic_threshold * 0.5)
+        # else:
+        #     confidence = 0.0
+
+        # # Отладочная информация о решении
+        # if idx % 1000 == 0:
+        #     print(f"  Decision: prediction={prediction}, confidence={confidence:.4f}, threshold={self.config.confidence_threshold}")
+        
+        # # Применяем фильтр уверенности
+        # if confidence < self.config.confidence_threshold:
+        #     prediction = 0
+        #     confidence = 0.0
+        
+        # # Формируем итоговый результат
+        # result = {
+        #     'prediction': prediction,
+        #     'confidence': confidence,
+        #     'state': current_state,
+        #     'quantile_predictions': {q: float(val) for q, val in predictions.items()} if predictions else {}
+        # }
+
+        # Расчет уверенности с учетом распределения квантилей
+        # Эта версия учитывает разброс между квантилями и дает более плавную оценку
+
+        # Расчет уверенности с более плавной шкалой и учетом распределения квантилей
         if prediction == 1:  # Рост
-            # Используем абсолютное значение и пропорцию от порога
-            confidence = min(1.0, 0.5 + abs(median) / dynamic_threshold * 0.5)
+            # Расчет уверенности на основе отношения медианы к порогу
+            normalized_median = median / dynamic_threshold
+            
+            # Базовая уверенность - линейная функция от нормализованного значения медианы
+            # Начинаем с 0.5 при медиане = пороговому значению
+            # и увеличиваем до максимум 0.8 для больших значений медианы
+            base_confidence = min(0.8, 0.5 + normalized_median * 0.15)
+            
+            # Дополнительный бонус, если нижний квантиль положительный
+            additional_confidence = 0.0
+            if lower > 0:
+                # Если нижний квантиль тоже выше нуля, это увеличивает уверенность
+                additional_confidence = 0.15
+            
+            # Итоговая уверенность
+            confidence = min(0.95, base_confidence + additional_confidence)
+            
         elif prediction == 2:  # Падение
-            # Используем абсолютное значение и пропорцию от порога
-            confidence = min(1.0, 0.5 + abs(median) / dynamic_threshold * 0.5)
+            # Аналогично для падения, но используем абсолютное значение медианы
+            normalized_median = abs(median) / dynamic_threshold
+            
+            # Базовая уверенность
+            base_confidence = min(0.8, 0.5 + normalized_median * 0.15)
+            
+            # Дополнительный бонус, если верхний квантиль отрицательный
+            additional_confidence = 0.0
+            if upper < 0:
+                # Если верхний квантиль тоже ниже нуля, это увеличивает уверенность
+                additional_confidence = 0.15
+            
+            # Итоговая уверенность
+            confidence = min(0.95, base_confidence + additional_confidence)
+            
         else:
             confidence = 0.0
 
-        # Отладочная информация о решении
+        # Выводим отладочную информацию
         if idx % 1000 == 0:
             print(f"  Decision: prediction={prediction}, confidence={confidence:.4f}, threshold={self.config.confidence_threshold}")
-        
-        # Применяем фильтр уверенности
-        if confidence < self.config.confidence_threshold:
-            prediction = 0
-            confidence = 0.0
-        
-        # Формируем итоговый результат
+
+                # Формируем итоговый результат
         result = {
             'prediction': prediction,
             'confidence': confidence,
             'state': current_state,
             'quantile_predictions': {q: float(val) for q, val in predictions.items()} if predictions else {}
         }
-        
+
         return result
             
     def run_on_data(self, prices, volumes=None, verbose=True, 
